@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Админка</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Inter',sans-serif; background:#fafafa; color:#111; padding:32px; }
+.wrap { max-width:1100px; margin:0 auto; }
+h1 { font-size:24px; margin-bottom:4px; }
+.sub { color:#888; font-size:14px; margin-bottom:32px; }
+.card { background:#fff; border:1px solid #ececec; border-radius:12px; padding:24px; margin-bottom:24px; }
+.card h2 { font-size:16px; margin-bottom:16px; }
+input, select, textarea { width:100%; padding:11px 14px; border:1px solid #ececec; border-radius:6px; font:inherit; font-size:14px; margin-bottom:10px; background:#fff; }
+button { padding:11px 18px; background:#111; color:#fff; border:none; border-radius:6px; font:inherit; font-size:13px; cursor:pointer; }
+button:hover { opacity:.85; }
+button.ghost { background:#fff; color:#111; border:1px solid #ececec; }
+button.danger { background:#d33; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:10px 8px; border-bottom:1px solid #ececec; vertical-align:top; }
+th { color:#888; font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+.row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.hidden { display:none; }
+.login-wrap { max-width:360px; margin:80px auto; background:#fff; padding:32px; border-radius:12px; border:1px solid #ececec; }
+.status { display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; background:#f0f0f0; }
+.status.new { background:#fff3cd; } .status.paid { background:#d4edda; } .status.sent { background:#cce5ff; } .status.canceled { background:#f8d7da; }
+.order-items { color:#888; font-size:12px; }
+.top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+</style>
+</head>
+<body>
+
+<div class="login-wrap" id="loginBox">
+  <h1>Вход в админку</h1>
+  <p class="sub">Только для администратора</p>
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Пароль">
+  <button onclick="login()" style="width:100%">Войти</button>
+</div>
+
+<div class="wrap hidden" id="app">
+  <div class="top-bar">
+    <div>
+      <h1>Админка</h1>
+      <p class="sub">Управление товарами и заказами</p>
+    </div>
+    <button class="ghost" onclick="logout()">Выйти</button>
+  </div>
+
+  <div class="card">
+    <h2>➕ Добавить товар</h2>
+    <div class="row">
+      <select id="pBrand">
+        <option value="brand1">BRAND ONE</option>
+        <option value="brand2">BRAND TWO</option>
+        <option value="brand3">BRAND THREE</option>
+      </select>
+      <input id="pSizes" placeholder="Размеры через запятую" value="S,M,L,XL">
+    </div>
+    <input id="pName" placeholder="Название футболки">
+    <div class="row">
+      <input id="pPrice" type="number" placeholder="Цена, ₽">
+      <input id="pImage" placeholder="URL картинки (или /img/file.jpg)">
+    </div>
+    <button onclick="addProduct()">Добавить</button>
+    <button class="ghost" onclick="resetForm()">Очистить</button>
+  </div>
+
+  <div class="card">
+    <h2>📦 Товары</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Бренд</th><th>Название</th><th>Цена</th><th>Размеры</th><th></th></tr></thead>
+      <tbody id="productsTable"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>🛒 Заказы</h2>
+    <table>
+      <thead><tr><th>#</th><th>Дата</th><th>Клиент</th><th>Состав</th><th>Сумма</th><th>Статус</th></tr></thead>
+      <tbody id="ordersTable"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let user = null;
+let products = [];
+let editingId = null;
+
+async function login() {
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  const res = await fetch("/api/auth/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password })
+  });
+  const d = await res.json();
+  if (!res.ok) return alert(d.error || "Ошибка");
+  if (!d.is_admin) return alert("Этот аккаунт не админ");
+  init();
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  location.reload();
+}
+
+async function init() {
+  const res = await fetch("/api/auth/me");
+  if (!res.ok) return;
+  user = await res.json();
+  if (!user.is_admin) return;
+  document.getElementById("loginBox").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  await loadProducts();
+  await loadOrders();
+}
+
+async function loadProducts() {
+  products = await (await fetch("/api/products")).json();
+  const tbody = document.getElementById("productsTable");
+  tbody.innerHTML = products.map(p => `
+    <tr>
+      <td>${p.id}</td>
+      <td>${p.brand}</td>
+      <td>${p.name}</td>
+      <td>${p.price.toLocaleString("ru-RU")} ₽</td>
+      <td>${p.sizes}</td>
+      <td style="white-space:nowrap">
+        <button class="ghost" onclick="editProduct(${p.id})">✎</button>
+        <button class="danger" onclick="delProduct(${p.id})">🗑</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function editProduct(id) {
+  const p = products.find(x => x.id === id);
+  if (!p) return;
+  editingId = id;
+  document.getElementById("pBrand").value = p.brand;
+  document.getElementById("pName").value = p.name;
+  document.getElementById("pPrice").value = p.price;
+  document.getElementById("pImage").value = p.image;
+  document.getElementById("pSizes").value = p.sizes;
+  document.querySelector(".card button").textContent = "Сохранить изменения";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetForm() {
+  editingId = null;
+  ["pName","pPrice","pImage"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("pSizes").value = "S,M,L,XL";
+  document.querySelector(".card button").textContent = "Добавить";
+}
+
+async function addProduct() {
+  const brand = document.getElementById("pBrand").value;
+  const name = document.getElementById("pName").value.trim();
+  const price = parseInt(document.getElementById("pPrice").value);
+  const image = document.getElementById("pImage").value.trim();
+  const sizes = document.getElementById("pSizes").value.trim();
+  if (!name || !price) return alert("Заполни название и цену");
+
+  const url = editingId ? `/api/products/${editingId}` : "/api/products";
+  const method = editingId ? "PUT" : "POST";
+  const res = await fetch(url, {
+    method, headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ brand, name, price, image, sizes })
+  });
+  if (!res.ok) return alert("Ошибка сохранения");
+  resetForm();
+  await loadProducts();
+}
+
+async function delProduct(id) {
+  if (!confirm("Удалить товар?")) return;
+  await fetch("/api/products/" + id, { method: "DELETE" });
+  await loadProducts();
+}
+
+async function loadOrders() {
+  const orders = await (await fetch("/api/orders")).json();
+  const tbody = document.getElementById("ordersTable");
+  if (!orders.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#888">Пока нет заказов</td></tr>'; return; }
+  tbody.innerHTML = orders.map(o => `
+    <tr>
+      <td>#${o.id}</td>
+      <td>${new Date(o.created_at).toLocaleString("ru-RU")}</td>
+      <td>${o.name}<br><span style="color:#888">${o.phone}</span></td>
+      <td class="order-items">${o.items.map(i => `${i.name} (${i.size}) × ${i.qty}`).join("<br>")}</td>
+      <td><strong>${o.total.toLocaleString("ru-RU")} ₽</strong></td>
+      <td>
+        <select onchange="setStatus(${o.id}, this.value)" style="margin:0;padding:6px 8px;font-size:12px">
+          ${["new","paid","sent","canceled"].map(s => `<option value="${s}" ${o.status===s?"selected":""}>${s}</option>`).join("")}
+        </select>
+      </td>
+    </tr>
+  `).join("");
+}
+
+async function setStatus(id, status) {
+  await fetch("/api/orders/" + id, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status })
+  });
+}
+
+init();
+</script>
+</body>
+</html>
